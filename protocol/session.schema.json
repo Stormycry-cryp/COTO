@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Stormycry-cryp/COTO/protocol/session.schema.json",
+  "title": "COTO Session Snapshot",
+  "$ref": "#/$defs/SessionSnapshot",
+  "$defs": {
+    "TextPart": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ImagePart": {
+      "type": "object",
+      "required": ["type", "data", "mimeType"],
+      "properties": {
+        "type": { "const": "image" },
+        "data": { "type": "string", "description": "Base64 or provider-compatible image payload." },
+        "mimeType": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ContentPart": {
+      "oneOf": [
+        { "$ref": "#/$defs/TextPart" },
+        { "$ref": "#/$defs/ImagePart" }
+      ]
+    },
+    "ToolCall": {
+      "type": "object",
+      "required": ["id", "name", "arguments"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "Message": {
+      "type": "object",
+      "required": ["id", "role", "content"],
+      "properties": {
+        "id": { "type": "string" },
+        "role": { "enum": ["user", "assistant", "tool"] },
+        "content": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ContentPart" }
+        },
+        "toolCalls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ToolCall" }
+        },
+        "toolCallId": { "type": "string" },
+        "toolName": { "type": "string" },
+        "isError": { "type": "boolean" },
+        "providerData": {
+          "type": "object",
+          "required": ["providerId", "model", "value"],
+          "properties": {
+            "providerId": { "type": "string" },
+            "model": { "type": "string" },
+            "value": true
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "SessionMeta": {
+      "type": "object",
+      "required": ["id", "createdAt", "workspace", "providerId", "model", "schemaVersion"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,100}$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "workspace": { "type": "string" },
+        "workspaceId": { "type": "string" },
+        "profileId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "parentId": { "type": "string" },
+        "providerId": { "type": "string" },
+        "model": { "type": "string" },
+        "schemaVersion": { "const": 1 }
+      },
+      "additionalProperties": false
+    },
+    "TurnResult": {
+      "type": "object",
+      "required": ["turnId", "status", "text"],
+      "properties": {
+        "turnId": { "type": "string" },
+        "status": { "enum": ["completed", "interrupted", "failed"] },
+        "text": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "PendingInput": {
+      "type": "object",
+      "required": ["inputId", "acceptedSeq", "status", "mode", "content"],
+      "properties": {
+        "inputId": { "type": "string" },
+        "acceptedSeq": { "type": "integer", "minimum": 1 },
+        "turnId": { "type": "string" },
+        "status": { "enum": ["pending", "applied", "rejected", "withdrawn"] },
+        "mode": { "enum": ["steer", "follow_up", "interrupt"] },
+        "content": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ContentPart" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Approval": {
+      "type": "object",
+      "required": ["id", "turnId"],
+      "properties": {
+        "id": { "type": "string" },
+        "turnId": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "UnresolvedTool": {
+      "type": "object",
+      "required": ["invocationId", "call", "turnId"],
+      "properties": {
+        "invocationId": { "type": "string" },
+        "call": { "$ref": "#/$defs/ToolCall" },
+        "turnId": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "SessionSnapshot": {
+      "type": "object",
+      "required": ["meta", "seq", "status", "messages", "pendingInputs", "approvals", "unresolved", "results"],
+      "properties": {
+        "meta": { "$ref": "#/$defs/SessionMeta" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["idle", "active", "interrupted", "archived", "closed"] },
+        "activeTurnId": { "type": "string" },
+        "messages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Message" }
+        },
+        "pendingInputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PendingInput" }
+        },
+        "approvals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Approval" }
+        },
+        "unresolved": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/UnresolvedTool" }
+        },
+        "results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TurnResult" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

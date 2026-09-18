@@ -1,0 +1,12 @@
+node_modules/
+dist/
+upstream/
+.coto/
+.env
+.env.*
+!.env.example
+*.tgz
+coverage/
+.DS_Store
+*.log
+.tmp/

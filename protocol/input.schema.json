@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Stormycry-cryp/COTO/protocol/input.schema.json",
+  "title": "COTO Input Request",
+  "$ref": "#/$defs/InputRequest",
+  "$defs": {
+    "InputRequest": {
+      "type": "object",
+      "required": ["inputId", "mode", "content"],
+      "properties": {
+        "inputId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,100}$",
+          "description": "Stable idempotency identifier. Reuse only with the same mode, expectedTurnId and ordered content parts. JSON object key order does not matter."
+        },
+        "mode": { "enum": ["steer", "follow_up", "interrupt"] },
+        "content": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "session.schema.json#/$defs/ContentPart" }
+        },
+        "expectedTurnId": {
+          "type": "string",
+          "description": "Required by steer and interrupt; ignored by follow_up."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "enum": ["steer", "interrupt"] } },
+            "required": ["mode"]
+          },
+          "then": { "required": ["expectedTurnId"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "InputReceipt": {
+      "type": "object",
+      "required": ["inputId", "acceptedSeq", "status"],
+      "properties": {
+        "inputId": { "type": "string" },
+        "acceptedSeq": { "type": "integer", "minimum": 1 },
+        "turnId": { "type": "string" },
+        "status": { "enum": ["pending", "applied", "rejected", "withdrawn"] },
+        "requestId": { "type": "string", "description": "Present on HTTP submission responses." }
+      },
+      "additionalProperties": false
+    }
+  }
+}

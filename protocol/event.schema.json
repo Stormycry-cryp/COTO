@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Stormycry-cryp/COTO/protocol/event.schema.json",
+  "title": "COTO Agent Event",
+  "type": "object",
+  "required": ["schemaVersion", "sessionId", "eventId", "seq", "timestamp", "type", "data"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "sessionId": { "type": "string" },
+    "eventId": {
+      "type": "string",
+      "description": "Persistent events use <sessionId>:<seq>."
+    },
+    "seq": { "type": "integer", "minimum": 0 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "type": {
+      "type": "string",
+      "enum": [
+        "input.accepted",
+        "input.applied",
+        "input.rejected",
+        "input.withdrawn",
+        "turn.started",
+        "turn.interrupting",
+        "turn.interrupted",
+        "turn.completed",
+        "turn.failed",
+        "text.delta",
+        "message.committed",
+        "message.completed",
+        "model.retrying",
+        "model.attempt_discarded",
+        "usage.updated",
+        "tool.arguments.delta",
+        "tool.started",
+        "tool.progress",
+        "tool.completed",
+        "tool.failed",
+        "tool.cancelled",
+        "tool.outcome_unknown",
+        "tool.reconciled",
+        "approval.required",
+        "approval.resolved",
+        "context.compacted",
+        "recovery.required",
+        "provider.changed",
+        "session.forked",
+        "session.archived",
+        "session.closed",
+        "session.error"
+      ]
+    },
+    "turnId": { "type": "string" },
+    "stepId": { "type": "string" },
+    "attemptId": { "type": "string" },
+    "messageId": { "type": "string" },
+    "data": { "type": "object" }
+  },
+  "additionalProperties": false
+}
