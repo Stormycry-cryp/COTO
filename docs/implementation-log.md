@@ -103,6 +103,7 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 - Provider 专项测试 24/24 通过；全仓测试 59/59 通过；Node 22 全仓 TypeScript 检查通过。
 - Node 22 / 24 的 tarball 消费者及 Python HTTP/SSE smoke 通过；Node 24 的 8 项 Tool/Skill 专项测试通过。
 - AJV 8.20.0、diff 8.0.4、picomatch 4.0.7、YAML 2.9.1 更新后，Node 22 类型检查、构建和 59 项测试再次通过；npm 官方运行时依赖审计报告 0 项漏洞。审计是当次公告快照，不代表永久无风险。
+- 从本地 Git commit 安装到独立临时项目，`prepare` 自动构建并通过包名运行 Agent，返回 `Echo: git install smoke`。该检查覆盖 Git 依赖构建，不代表 GitHub 网络始终可达。
 
 ## 待验证与限制
 
@@ -112,6 +113,8 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 - [x] 实际运行 Python HTTP/SSE 客户端，对本地真实 COTO 服务完成回执、流式内容和终态验收。
 - [ ] 实际运行 Java、Go、.NET 最小消费者；README 目前只提供接入片段。
 - [ ] 通过真实反向代理验证 SSE 缓冲、心跳和重连行为。
-- [ ] 创建中文 PR 并检查 GitHub CI；功能分支推送和 PR 创建是本次交付最后一步，当前分支尚未合入 `main`。
+- [x] 上传 `feat/agent-foundation` 并创建中文 [PR #1](https://github.com/Stormycry-cryp/COTO/pull/1)。已确认 Node 22.19.0 / 24.x CI 触发，最终状态由 [PR checks](https://github.com/Stormycry-cryp/COTO/pull/1/checks) 持续记录；当前分支尚未合入 `main`。
+
+首次代码提交为 `819db5bf7ebec197a691c9270edf7b95380d181e`。本机 Git HTTPS 连接超时后，通过 GitHub Git Data API 发布功能分支，并校验远端源码树和提交 SHA 与本地完全一致。仓库提供源码和可构建 npm 包，尚未发布到 npm registry。
 
 当前基础服务是单实例、单 workspace/default profile。多实例共享 Store、分布式租约、在线事件裁剪、WebSocket、多 Agent 调度和业务账号系统不在 `0.1.0` 实现范围内。Gemini 的底层 SDK 要求非空内部 key，因此 `auth: 'none'` 会发送空的 `x-goog-api-key` 来阻止 SDK 注入占位 key；不会发送 COTO 占位密钥，完全移除空 header 需要自建 Gemini 适配器。
