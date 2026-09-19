@@ -232,6 +232,8 @@ export function createProvider(config: ProviderConfig): ModelProvider {
       );
       try {
         for await (const event of stream) {
+          // SDK queues may already contain a completion when the caller cancels.
+          if (combined.aborted) throw new AgentError('aborted', 'Operation aborted', 409);
           if (event.type === 'text_delta') yield { type: 'text_delta', text: event.delta };
           if (event.type === 'toolcall_delta') {
             const call = event.partial.content[event.contentIndex];
@@ -285,6 +287,7 @@ export function createProvider(config: ProviderConfig): ModelProvider {
             };
           }
         }
+        if (combined.aborted) throw new AgentError('aborted', 'Operation aborted', 409);
       } catch (error) {
         if (error instanceof AgentError) throw error;
         throw new AgentError(

@@ -647,6 +647,43 @@ for (const protocol of protocols) {
   });
 }
 
+for (const protocol of protocols) {
+  test(`${protocol}: cancellation after a text delta discards buffered completion`, async () => {
+    const server = await mockServer((_req, res) => {
+      if (protocol === 'openai-chat') openAIChatText(res);
+      else if (protocol === 'openai-responses') openAIResponsesText(res);
+      else if (protocol === 'anthropic') anthropicText(res);
+      else geminiText(res);
+    });
+    try {
+      const provider = createProvider({
+        protocol,
+        model: 'test-model',
+        baseURL: baseURL(protocol, server.url),
+        auth: 'none',
+      });
+      const controller = new AbortController();
+      const stream = provider.stream(request(), { signal: controller.signal });
+      let receivedText = false;
+      for await (const event of stream) {
+        if (event.type !== 'text_delta') continue;
+        receivedText = true;
+        // Let the SDK buffer the rest of the response before cancellation.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        controller.abort();
+        await assert.rejects(
+          stream.next(),
+          (error: unknown) => error instanceof AgentError && error.code === 'aborted',
+        );
+        break;
+      }
+      assert(receivedText);
+    } finally {
+      await server.close();
+    }
+  });
+}
+
 test('runtime API key and resolver authentication use the configured endpoint directly', async () => {
   const auth: Array<string | undefined> = [];
   const server = await mockServer((req, res, index) => {

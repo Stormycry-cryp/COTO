@@ -108,7 +108,8 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 ## 待验证与限制
 
 - [x] OpenAI Chat、OpenAI Responses、Anthropic、Gemini 完成协议级 HTTP/SSE mock：文本分片、Tool 调用、usage、错误、认证和取消。
-- [ ] 使用用户明确提供的凭据与低成本模型验证四种 Provider 的真实 endpoint。当前没有真实端点完成证据。
+- [x] 使用用户提供的凭据直连 DeepSeek `https://api.deepseek.com` / `deepseek-flash`，完成 OpenAI Chat 兼容协议的真实端点测试，详细记录见下文。
+- [ ] OpenAI Responses、Anthropic、Gemini 的生产 endpoint 仍未带凭据验证；DeepSeek 测试不代表其他协议或其他兼容网关已验收。
 - [x] 在干净临时目录安装 `npm pack` 产物并运行包消费者示例。
 - [x] 实际运行 Python HTTP/SSE 客户端，对本地真实 COTO 服务完成回执、流式内容和终态验收。
 - [ ] 实际运行 Java、Go、.NET 最小消费者；README 目前只提供接入片段。
@@ -118,3 +119,14 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 首次代码提交为 `819db5bf7ebec197a691c9270edf7b95380d181e`。本机 Git HTTPS 连接超时后，通过 GitHub Git Data API 发布功能分支，并校验远端源码树和提交 SHA 与本地完全一致。仓库提供源码和可构建 npm 包，尚未发布到 npm registry。
 
 当前基础服务是单实例、单 workspace/default profile。多实例共享 Store、分布式租约、在线事件裁剪、WebSocket、多 Agent 调度和业务账号系统不在 `0.1.0` 实现范围内。Gemini 的底层 SDK 要求非空内部 key，因此 `auth: 'none'` 会发送空的 `x-goog-api-key` 来阻止 SDK 注入占位 key；不会发送 COTO 占位密钥，完全移除空 header 需要自建 Gemini 适配器。
+
+## DeepSeek 真实端点验收（2026-09-19）
+
+配置为 `protocol: openai-chat`、`baseURL: https://api.deepseek.com`、`model: deepseek-flash`，直接通过 Provider 适配器访问，无本地协议转换代理。测试用密钥经关闭回显的 stdin 注入进程环境，没有写入仓库、Session 文件或测试输出；会话使用 MemorySessionStore，工具只返回随机校验值。
+
+- HTTP/SSE 全链路：通过 CotoClient 提交输入，真实模型调用只读工具 1 次，按实际工具结果输出随机 token；收到 26 段文本事件和 turn.completed。
+- 上下文续接：后续请求准确复述前一轮随机 token，没有再次调用工具。修复后复测三次完整模型请求的 usage 分别为输入/输出 318/41、396/27、444/40；这些是该次响应的计量，取消请求的完整计费未知。
+- 流式取消：固定短句提示收到首段文本后触发 AbortSignal，Provider 返回 aborted，没有交付后续完成结果。早先使用长计数任务的探针没有通过断言，因此改用确保检查文本阶段的短提示并单独复测。
+- 本次发现并修复适配器取消后仍可能交付 SDK 缓冲完成事件的问题。四协议本地回归在修复前均失败、修复后均通过；全仓 63/63 测试、类型检查与构建通过。
+
+`scripts/smoke-provider.mjs` 保存无密钥的可重跑脚本：每次输出最多 256 token，Runtime 最多 3 步、无自动重试；`COTO_PROBE_ONLY=cancellation` 可单独检查取消。默认 CI 不运行生产探针。这里只验收短文本、工具和上述会话路径，未验证长上下文、图片、DeepSeek 其他模型或服务端取消后的计费停止。

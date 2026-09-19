@@ -148,6 +148,28 @@ const provider = createProvider({
 
 不需要 Provider API key 的受信任 endpoint 可设置 `auth: 'none'`。OpenAI 和 Anthropic 适配器会抑制 SDK 自动生成的认证值；Gemini SDK 强制要求 key，因此该模式仍会发送值为空的 `x-goog-api-key` header。拒绝空 header 的 Gemini 兼容网关需要使用真实 key 或显式 header。宿主显式配置的自定义 header 会被保留；不要把 `auth: 'none'` 当成服务端访问控制。
 
+### DeepSeek
+
+DeepSeek 的 `deepseek-flash` 已完成真实端点的文本流、工具回填、会话续接和取消测试，可使用：
+
+```ts
+const provider = createProvider({
+  protocol: 'openai-chat',
+  baseURL: 'https://api.deepseek.com',
+  model: 'deepseek-flash',
+  apiKeyEnv: 'DEEPSEEK_API_KEY',
+});
+```
+
+真实端点探针 `scripts/smoke-provider.mjs` 需要主动运行，会产生模型 API 用量。先通过宿主环境注入 `DEEPSEEK_API_KEY`，再执行：
+
+```bash
+npm run build
+COTO_PROTOCOL=openai-chat COTO_BASE_URL=https://api.deepseek.com COTO_MODEL=deepseek-flash COTO_API_KEY_ENV=DEEPSEEK_API_KEY node scripts/smoke-provider.mjs
+```
+
+探针使用内存会话、临时 HTTP/SSE 监听和只读校验工具，验证后关闭服务。该探针不加入默认测试或 CI；其他 Provider 的生产验证状态见实施记录。
+
 ### Provider catalog
 
 `providerFromCatalog()` 把 endpoint、认证方式和模型选择分开，适合由项目配置文件或管理后台维护白名单：
