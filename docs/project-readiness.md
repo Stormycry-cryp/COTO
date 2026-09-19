@@ -11,7 +11,7 @@
 - [x] 生命周期：回归检查 Session 创建/关闭、Provider 切换、恢复与活动工具处理，修复可复现的死锁、跨会话影响和状态错误。自定义扩展仍必须遵守取消契约。
 - [x] 消费者验收：干净临时项目安装 tarball，执行 init/doctor/run、重启后续接、HTTP/SSE 服务和自定义 Tool/Skill。自动化使用本地协议 fixture，不把凭据加入 CI。
 - [x] 真实项目验收：独立临时项目使用 DeepSeek 完成读取文件、实际编辑和结果核对；命令设置调用/时间上限，凭据仅在进程中注入。
-- [ ] 交付：更新 README、后端文档、实施证据和 PR；GitHub Node 22/24 CI 通过，提供固定 commit 和安装方式。
+- [x] 交付：更新 README、后端文档、实施证据和 PR；GitHub Node 22/24 CI 通过，提供固定 commit 和安装方式。
 
 ## 验证标准
 
@@ -26,4 +26,6 @@
 - 新增配置加载器与 `init/doctor/run/sessions/serve`，Node 22/24 的独立 tarball 项目验收通过；配置与 CLI 的定点测试覆盖缺少凭据、文件保护、非交互审批、续接及取消。
 - 修复关闭中的 Session 创建/打开竞态、重复 close 提前返回、缓存关闭会话重开、撤回输入后流挂起、符号链接工作区身份，以及进程单次超时和 UTF-8 分块。生命周期 17 项、Tool/Skill 10 项定点回归通过。
 - DeepSeek 真实项目：独立目录安装 tarball，默认 allow-all；模型先 read_file，再 edit_file，最后 exec_command 执行 `node --test calculator.test.mjs`，结果通过。父进程核对测试文件未改、源码已改，再独立执行测试通过；会话日志没有测试密钥。四次请求用量见实施记录。
-- 最终本地检查：Node 22.23.2 类型检查、89/89 测试、构建通过；项目 tarball smoke 包含 `npm exec -- coto doctor`，验证实际 npm bin 入口；Python HTTP/SSE smoke 通过。等待后续 PR 的 GitHub 检查及合并。
+- 最终本地检查：Node 22.23.2 类型检查、89/89 测试、构建通过；项目 tarball smoke 包含 `npm exec -- coto doctor`，验证实际 npm bin 入口；Python HTTP/SSE smoke 通过。
+- [PR #2](https://github.com/Stormycry-cryp/COTO/pull/2) 的功能提交为 `0eb789a430599ebdd262420771b6f8a1687dd1af`；[GitHub CI](https://github.com/Stormycry-cryp/COTO/actions/runs/35415061399) 的 Node 22.19.0 和 24.x 均通过。PR 页面记录最终合并状态。
+- 固定版本接入：`npm install 'git+https://github.com/Stormycry-cryp/COTO.git#0eb789a430599ebdd262420771b6f8a1687dd1af'`，然后执行 `npx coto init`；凭据配置后运行 `npx coto doctor`、`npx coto run '项目任务'`。

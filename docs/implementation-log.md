@@ -148,4 +148,4 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 
 此次四个完整请求的输入/输出 usage 分别为 `1347/78`、`1582/154`、`1758/74`、`2007/122`。配置直连 `https://api.deepseek.com`，模型 `deepseek-flash`，`maxSteps=10`、`maxRetries=0`、`maxTurnMs=180000`、每次输出最多 1024 token。凭据经关闭回显的 stdin 注入，不保存到临时配置或仓库；会话日志检查未出现凭据，临时项目验证后清理。该探针不加入默认 CI，也不代表其他模型或复杂项目任务已验收。
 
-最终本地验证使用 Node 22.23.2：类型检查、89/89 测试、构建、独立 tarball 项目 smoke 和 Python HTTP/SSE smoke 全部通过。tarball 项目检查额外通过 `npm exec -- coto doctor` 验证 npm bin 入口。后续 PR 检查结果以 GitHub Actions 对应提交为准。
+最终本地验证使用 Node 22.23.2：类型检查、89/89 测试、构建、独立 tarball 项目 smoke 和 Python HTTP/SSE smoke 全部通过。tarball 项目检查额外通过 `npm exec -- coto doctor` 验证 npm bin 入口。[PR #2](https://github.com/Stormycry-cryp/COTO/pull/2) 功能提交为 `0eb789a430599ebdd262420771b6f8a1687dd1af`，[GitHub Actions](https://github.com/Stormycry-cryp/COTO/actions/runs/35415061399) 的 Node 22.19.0 / 24.x 均通过完整检查，最终合并记录见 PR。
