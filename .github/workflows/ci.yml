@@ -53,5 +53,8 @@ jobs:
       - name: Smoke test package tarball
         run: node scripts/smoke-package.mjs
 
+      - name: Smoke test installed project workflow
+        run: node scripts/smoke-project.mjs
+
       - name: Smoke test Python HTTP/SSE client
         run: node scripts/smoke-python-client.mjs

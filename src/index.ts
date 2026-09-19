@@ -20,7 +20,7 @@ export interface AgentOptions extends Omit<RuntimeOptions, 'provider' | 'tools'>
   projectInstructions?: boolean;
 }
 export function createAgent(options: AgentOptions) {
-  const workspace = resolve(options.workspace);
+  let workspace = resolve(options.workspace);
   const store = options.store ?? new FileSessionStore(resolve(workspace, '.coto/sessions'));
   const tools = options.tools === 'local-basic' ? localTools() : (options.tools ?? []);
   const registry = options.skills
@@ -30,8 +30,10 @@ export function createAgent(options: AgentOptions) {
     'stream' in options.provider ? options.provider : createProvider(options.provider);
   const loaded = new Map<string, Session>();
   const opening = new Map<string, Promise<Session>>();
+  const operations = new Set<Promise<unknown>>();
   let closed = false;
-  const ready = Promise.all([realpath(workspace), registry?.discover()]);
+  let closePromise: Promise<void> | undefined;
+  let ready: Promise<void> | undefined;
   const runtime: RuntimeOptions = {
     ...options,
     provider,
@@ -45,52 +47,107 @@ export function createAgent(options: AgentOptions) {
       ],
     },
   };
-  async function load(id: string) {
-    if (closed) throw new AgentError('agent_closed', 'Agent is closed', 409);
-    await ready;
-    if (closed) throw new AgentError('agent_closed', 'Agent is closed', 409);
-    if (loaded.has(id)) return loaded.get(id)!;
-    if (opening.has(id)) return opening.get(id)!;
-    const task = (async () => {
-      const { meta } = await store.read(id);
-      if (resolve(meta.workspace) !== workspace)
-        throw new AgentError('workspace_mismatch', 'Session belongs to a different workspace', 409);
-      const session = await Session.open(meta, store, runtime);
-      loaded.set(id, session);
-      return session;
-    })();
-    opening.set(id, task);
+  function unavailable() {
+    return new AgentError('agent_closed', 'Agent is closed', 409);
+  }
+  function ensureReady(): Promise<void> {
+    if (!ready)
+      ready = Promise.all([realpath(workspace), registry?.discover()]).then(([canonical]) => {
+        workspace = canonical;
+      });
+    return ready;
+  }
+  function track<T>(task: Promise<T>): Promise<T> {
+    operations.add(task);
+    void task.then(
+      () => operations.delete(task),
+      () => operations.delete(task),
+    );
+    return task;
+  }
+  async function matchesWorkspace(candidate: string) {
+    const path = resolve(candidate);
+    if (path === workspace) return true;
     try {
-      return await task;
-    } finally {
-      opening.delete(id);
+      return (await realpath(path)) === workspace;
+    } catch {
+      return false;
     }
   }
+  function load(id: string, admitted = false): Promise<Session> {
+    if (closed && !admitted) return Promise.reject(unavailable());
+    return track(
+      (async () => {
+        await ensureReady();
+        if (closed && !admitted) throw unavailable();
+        const cached = loaded.get(id);
+        if (cached) {
+          if (!cached.isClosed) return cached;
+          await cached.close();
+          if (loaded.get(id) === cached) loaded.delete(id);
+          if (closed && !admitted) throw unavailable();
+        }
+        if (opening.has(id)) return opening.get(id)!;
+        const task = (async () => {
+          const { meta } = await store.read(id);
+          if (!(await matchesWorkspace(meta.workspace)))
+            throw new AgentError(
+              'workspace_mismatch',
+              'Session belongs to a different workspace',
+              409,
+            );
+          const session = await Session.open(meta, store, runtime);
+          loaded.set(id, session);
+          return session;
+        })();
+        opening.set(id, task);
+        try {
+          return await task;
+        } finally {
+          opening.delete(id);
+        }
+      })(),
+    );
+  }
   const sessions = {
-    async create(
+    create(
       metadata: Partial<
         Pick<SessionMeta, 'ownerId' | 'workspaceId' | 'profileId' | 'parentId'>
       > = {},
       id: string = crypto.randomUUID(),
-    ) {
-      await ready;
-      if (closed) throw new AgentError('agent_closed', 'Agent is closed', 409);
-      const meta: SessionMeta = {
-        id,
-        workspace,
-        createdAt: new Date().toISOString(),
-        schemaVersion: 1,
-        providerId: provider.id,
-        model: provider.model,
-        ...metadata,
-      };
-      await store.create(meta);
-      return load(meta.id);
+    ): Promise<Session> {
+      if (closed) return Promise.reject(unavailable());
+      return track(
+        (async () => {
+          await ensureReady();
+          if (closed) throw unavailable();
+          const meta: SessionMeta = {
+            id,
+            workspace,
+            createdAt: new Date().toISOString(),
+            schemaVersion: 1,
+            providerId: provider.id,
+            model: provider.model,
+            ...metadata,
+          };
+          await store.create(meta);
+          return load(meta.id, true);
+        })(),
+      );
     },
-    get: load,
-    resume: load,
+    get(id: string) {
+      return load(id);
+    },
+    resume(id: string) {
+      return load(id);
+    },
     async list() {
-      return (await store.list()).filter((m) => resolve(m.workspace) === workspace);
+      await ensureReady();
+      const records = await store.list();
+      const matches = await Promise.all(
+        records.map((record) => matchesWorkspace(record.workspace)),
+      );
+      return records.filter((_, index) => matches[index]);
     },
     async fork(
       id: string,
@@ -109,12 +166,16 @@ export function createAgent(options: AgentOptions) {
     sessions,
     store,
     provider,
-    async close() {
-      if (closed) return;
+    close(): Promise<void> {
+      if (closePromise) return closePromise;
       closed = true;
-      await Promise.all([...opening.values()].map((p) => p.catch(() => undefined)));
-      await Promise.all([...loaded.values()].map((s) => s.close()));
-      for (const tool of tools) await tool.close?.();
+      closePromise = (async () => {
+        await Promise.all([...operations].map((p) => p.catch(() => undefined)));
+        await Promise.all([...opening.values()].map((p) => p.catch(() => undefined)));
+        await Promise.all([...loaded.values()].map((s) => s.close()));
+        for (const tool of tools) await tool.close?.();
+      })();
+      return closePromise;
     },
   };
 }

@@ -8,6 +8,8 @@ COTO 的 TypeScript 核心负责 Runtime、Context、Tool/Skill、Session、输�
 
 当前服务实例绑定一个 `Agent`，也就是一个 workspace 和一组 Provider、Tool、Skill、Policy 配置。HTTP 调用方只能选择服务已暴露的 `default` workspace/profile，不能在请求中注入本地路径、模型 endpoint、密钥或 executable。
 
+项目可以先运行 `coto init`，再用 `coto serve` 启动同一份 `coto.config.json`。嵌入式后端从 `@coto/agent/config` 调用 `loadProjectConfig()`，复用返回的 `agentOptions` 和 `serverOptions`；业务 Tool、认证和共享 Store 仍由宿主注册。初始化默认 `allow-all`，应用服务应明确选择自己的 Tool 集合和权限。配置字段见 [项目配置](project-configuration.md)。
+
 | 宿主 | 推荐方式 |
 | --- | --- |
 | Node.js / TypeScript / Electron 主进程 | 直接 import 核心；需要进程隔离时调用 HTTP/SSE |
@@ -175,6 +177,8 @@ CLI 当前没有注入认证钩子的配置入口，适合本机开发。公网�
 浏览器原生 `EventSource` 不能设置任意 Authorization header。可使用仓库的 fetch SSE client，或由同源 BFF 用受 CSRF 保护的 cookie 代理。不要把 access token 放进 URL。
 
 服务退出顺序：先 `service.close()` 停止接收请求并关闭 SSE，再 `agent.close()` 取消活动轮次、关闭 Tool、刷完 Session writer 并释放锁。CLI 的 SIGINT/SIGTERM 处理执行这两个步骤。
+
+并发调用 `agent.close()` 或 `session.close()` 会等待同一次完整关闭。Agent 会等待已经开始的 Session 创建和打开完成后关闭结果；关闭后的 Session 拒绝写操作。在仍开放的 Agent 中再次调用 `sessions.get(id)`，会重新打开已关闭的缓存 Session。自定义 Provider、ContextContributor 和 Tool 需要遵守 `AbortSignal` 契约，宿主仍负责不响应取消的扩展进程。
 
 ## 8. 持久化和恢复
 

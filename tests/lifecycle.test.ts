@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   AgentError,
   createAgent,
@@ -9,7 +12,11 @@ import {
   type Tool,
 } from '../src/index.js';
 import { assistant, echoProvider, scriptedProvider } from '../src/testing/index.js';
-import { deferred } from '../src/core/async.js';
+import { abortable, deferred } from '../src/core/async.js';
+
+function nextTick() {
+  return new Promise<void>((resolve) => setImmediate(resolve));
+}
 
 test('withdrawing an input before application prevents its model request', async (t) => {
   const provider = echoProvider(0);
@@ -239,4 +246,281 @@ test('retry discards partial output and reuses a completed tool result without r
       ),
     false,
   );
+});
+
+test('concurrent session close calls share and await the same completion', async () => {
+  const releasing = deferred<void>();
+  const releaseGate = deferred<void>();
+  class SlowReleaseStore extends MemorySessionStore {
+    override async acquire(id: string) {
+      const release = await super.acquire(id);
+      return async () => {
+        releasing.resolve();
+        await releaseGate.promise;
+        await release();
+      };
+    }
+  }
+  const agent = createAgent({
+    workspace: process.cwd(),
+    provider: echoProvider(0),
+    store: new SlowReleaseStore(),
+  });
+  const session = await agent.sessions.create();
+  const first = session.close();
+  await releasing.promise;
+  const second = session.close();
+  assert.equal(second, first);
+  let settled = false;
+  void second.then(() => {
+    settled = true;
+  });
+  await nextTick();
+  assert.equal(settled, false);
+  releaseGate.resolve();
+  await first;
+  assert.equal(settled, true);
+  await agent.close();
+});
+
+test('session mutators reject after close', async () => {
+  const provider = echoProvider(0);
+  const agent = createAgent({
+    workspace: process.cwd(),
+    provider,
+    store: new MemorySessionStore(),
+  });
+  const session = await agent.sessions.create();
+  await session.close();
+  const unavailable = (error: unknown) =>
+    error instanceof AgentError && error.code === 'session_unavailable';
+  for (const operation of [
+    () => session.run('late input'),
+    () => session.approve('missing', true),
+    () => session.cancel('missing'),
+    () => session.withdraw('missing'),
+    () => session.reconcile('missing', 'outcome'),
+    () => session.resume(),
+    () => session.switchProvider(provider),
+    () => session.archive(),
+    () => session.seedFork([]),
+  ]) {
+    await assert.rejects(operation(), unavailable);
+  }
+  await agent.close();
+});
+
+test('runStream ends when its queued input is withdrawn', async (t) => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  const provider = scriptedProvider(async function* (_request, index, signal) {
+    if (index === 0) {
+      entered.resolve();
+      await abortable(gate.promise, signal);
+    }
+    yield { type: 'done', stopReason: 'stop', message: assistant(`response ${index}`) };
+  });
+  const agent = createAgent({
+    workspace: process.cwd(),
+    provider,
+    store: new MemorySessionStore(),
+  });
+  t.after(async () => {
+    gate.resolve();
+    await agent.close();
+  });
+  const session = await agent.sessions.create();
+  const first = session.run('active');
+  await entered.promise;
+  const queued = deferred<string>();
+  session.subscribe((event) => {
+    if (
+      event.type === 'input.accepted' &&
+      (event.data.request as InputRequest).content.some(
+        (part) => part.type === 'text' && part.text === 'queued',
+      )
+    )
+      queued.resolve((event.data.request as InputRequest).inputId);
+  });
+  const seen: string[] = [];
+  const streaming = (async () => {
+    for await (const event of session.runStream('queued')) seen.push(event.type);
+  })();
+  await session.withdraw(await queued.promise);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      streaming,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('runStream remained open')), 1000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+  assert(seen.includes('input.withdrawn'));
+  assert.equal(provider.requests.length, 1);
+  gate.resolve();
+  await first;
+});
+
+test('getting a manually closed cached session reopens it', async (t) => {
+  const agent = createAgent({
+    workspace: process.cwd(),
+    provider: echoProvider(0),
+    store: new MemorySessionStore(),
+  });
+  t.after(() => agent.close());
+  const original = await agent.sessions.create();
+  await original.close();
+  const reopened = await agent.sessions.get(original.id);
+  assert.notEqual(reopened, original);
+  assert.equal(reopened.isClosed, false);
+  assert.equal((await reopened.run('reopened')).status, 'completed');
+});
+
+test('agent close waits for an admitted session create and closes its result', async () => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  class SlowCreateStore extends MemorySessionStore {
+    override async create(meta: Parameters<MemorySessionStore['create']>[0]) {
+      entered.resolve();
+      await gate.promise;
+      await super.create(meta);
+    }
+  }
+  const agent = createAgent({
+    workspace: process.cwd(),
+    provider: echoProvider(0),
+    store: new SlowCreateStore(),
+  });
+  const creating = agent.sessions.create({}, 'racing-create');
+  await entered.promise;
+  const closing = agent.close();
+  let settled = false;
+  void closing.then(() => {
+    settled = true;
+  });
+  await nextTick();
+  assert.equal(settled, false);
+  gate.resolve();
+  const session = await creating;
+  await closing;
+  assert.equal(session.isClosed, true);
+  await assert.rejects(agent.sessions.get(session.id), /Agent is closed/);
+});
+
+test('agent close waits for an admitted session open and closes its result', async () => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  class SlowReadStore extends MemorySessionStore {
+    pause = false;
+    override async read(id: string) {
+      if (this.pause) {
+        entered.resolve();
+        await gate.promise;
+      }
+      return super.read(id);
+    }
+  }
+  const store = new SlowReadStore();
+  const first = createAgent({ workspace: process.cwd(), provider: echoProvider(0), store });
+  const id = (await first.sessions.create()).id;
+  await first.close();
+  store.pause = true;
+  const second = createAgent({ workspace: process.cwd(), provider: echoProvider(0), store });
+  const opening = second.sessions.get(id);
+  await entered.promise;
+  const closing = second.close();
+  gate.resolve();
+  const session = await opening;
+  await closing;
+  assert.equal(session.isClosed, true);
+});
+
+test('workspace identity uses real paths across symlink aliases', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'coto-lifecycle-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const workspace = join(root, 'workspace');
+  const alias = join(root, 'workspace-alias');
+  await mkdir(workspace);
+  await symlink(workspace, alias);
+  const store = new MemorySessionStore();
+  const first = createAgent({ workspace: alias, provider: echoProvider(0), store });
+  const created = await first.sessions.create();
+  assert.equal(created.meta.workspace, await realpath(workspace));
+  await first.close();
+  const second = createAgent({ workspace, provider: echoProvider(0), store });
+  t.after(() => second.close());
+  const reopened = await second.sessions.get(created.id);
+  assert.equal(reopened.id, created.id);
+});
+
+test('an unused agent does not start readiness for an invalid workspace', async () => {
+  const missing = join(tmpdir(), `coto-missing-${crypto.randomUUID()}`);
+  const agent = createAgent({
+    workspace: missing,
+    provider: echoProvider(0),
+    store: new MemorySessionStore(),
+  });
+  await nextTick();
+  await agent.close();
+});
+
+test('public session access cannot bypass a closed agent with extra arguments', async () => {
+  const agent = createAgent({
+    workspace: process.cwd(),
+    provider: echoProvider(0),
+    store: new MemorySessionStore(),
+  });
+  await agent.close();
+  const get = agent.sessions.get as unknown as (id: string, admitted: boolean) => Promise<unknown>;
+  const resume = agent.sessions.resume as unknown as (
+    id: string,
+    admitted: boolean,
+  ) => Promise<unknown>;
+  const closed = (error: unknown) => error instanceof AgentError && error.code === 'agent_closed';
+  await assert.rejects(get('missing', true), closed);
+  await assert.rejects(resume('missing', true), closed);
+});
+
+test('session close drains admitted control work before releasing its writer', async () => {
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  let controlComplete = false;
+  let completeWhenReleased = false;
+  class OrderedReleaseStore extends MemorySessionStore {
+    override async acquire(id: string) {
+      const release = await super.acquire(id);
+      return async () => {
+        completeWhenReleased = controlComplete;
+        await release();
+      };
+    }
+  }
+  const agent = createAgent({
+    workspace: process.cwd(),
+    provider: echoProvider(0),
+    store: new OrderedReleaseStore(),
+  });
+  const session = await agent.sessions.create();
+  const control = (
+    session as unknown as {
+      control: { run<T>(fn: () => Promise<T>): Promise<T> };
+    }
+  ).control;
+  const admitted = control.run(async () => {
+    entered.resolve();
+    await gate.promise;
+    controlComplete = true;
+  });
+  await entered.promise;
+  const closing = session.close();
+  await nextTick();
+  assert.equal(completeWhenReleased, false);
+  gate.resolve();
+  await admitted;
+  await closing;
+  assert.equal(completeWhenReleased, true);
+  await agent.close();
 });

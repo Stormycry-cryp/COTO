@@ -63,10 +63,10 @@ export async function workspacePath(
   if (!inside(actual))
     throw new AgentError('path_denied', 'Symlink resolves outside workspace', 403);
   const segments = relative(root, actual).split(/[\\/]/);
-  if (segments.some((s) => ['.git', '.coto'].includes(s)))
+  if (segments.some((s) => ['.git', '.coto', '.env.coto'].includes(s)))
     throw new AgentError(
       'path_denied',
-      'Agent state and Git internals are not tool-accessible',
+      'Agent state, credentials and Git internals are not tool-accessible',
       403,
     );
   return actual;
@@ -94,7 +94,7 @@ async function atomicWrite(path: string, content: string) {
   }
 }
 export async function walkFiles(root: string, signal: AbortSignal, limit = 5000) {
-  const rules = ignore().add(['.git', '.coto', 'node_modules']);
+  const rules = ignore().add(['.git', '.coto', '.env.coto', 'node_modules']);
   try {
     rules.add(await boundedRead(join(root, '.gitignore'), 64_000));
   } catch {}
