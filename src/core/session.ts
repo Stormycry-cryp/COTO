@@ -75,6 +75,7 @@ export class Session {
   private paused = false;
   private archived = false;
   private closed = false;
+  private closePromise?: Promise<void>;
   private fatal?: unknown;
   private validators = new Map<string, ReturnType<Ajv['compile']>>();
   private tools = new Map<string, Tool>();
@@ -261,6 +262,12 @@ export class Session {
       unresolved: [...this.unresolved].map(([invocationId, value]) => ({ invocationId, ...value })),
       results: [...this.results.values()],
     });
+  }
+  get isClosed() {
+    return this.closed;
+  }
+  private assertOpen() {
+    if (this.closed) throw new AgentError('session_unavailable', 'Session is closed', 409);
   }
   history(after = 0) {
     return structuredClone(this.events.filter((e) => e.seq > after));
@@ -768,6 +775,7 @@ export class Session {
   }
   async approve(id: string, allowed: boolean) {
     return this.control.run(async () => {
+      this.assertOpen();
       const approval = this.approvals.get(id);
       if (!approval || this.active?.id !== approval.turnId || this.active.controller.signal.aborted)
         throw new AgentError('approval_expired', 'Approval no longer applies', 409);
@@ -782,6 +790,7 @@ export class Session {
   }
   async cancel(turnId: string) {
     return this.control.run(async () => {
+      this.assertOpen();
       if (this.active?.id !== turnId) {
         if (this.results.has(turnId)) return;
         throw new AgentError('turn_conflict', 'Turn not active', 409);
@@ -792,6 +801,7 @@ export class Session {
   }
   async withdraw(inputId: string) {
     return this.control.run(async () => {
+      this.assertOpen();
       if (this.inputs.get(inputId)?.receipt.status !== 'pending')
         throw new AgentError('input_conflict', 'Input already applied or not found', 409);
       await this.emit('input.withdrawn', { inputId });
@@ -800,6 +810,7 @@ export class Session {
   }
   async reconcile(invocationId: string, outcome: string) {
     return this.control.run(async () => {
+      this.assertOpen();
       if (this.active)
         throw new AgentError('session_busy', 'Wait for the active turn to stop', 409);
       if (this.detachedTools.has(invocationId))
@@ -829,7 +840,8 @@ export class Session {
   }
   async resume() {
     return this.control.run(async () => {
-      if (this.active || this.archived || this.closed || this.unresolved.size)
+      this.assertOpen();
+      if (this.active || this.archived || this.unresolved.size)
         throw new AgentError(
           'recovery_required',
           'Session cannot resume while active, archived or unreconciled',
@@ -854,6 +866,7 @@ export class Session {
   }
   async switchProvider(provider: ModelProvider) {
     return this.control.run(async () => {
+      this.assertOpen();
       if (this.active || this.unresolved.size)
         throw new AgentError('session_busy', 'Switch provider only while idle and reconciled', 409);
       await this.emit('provider.changed', { providerId: provider.id, model: provider.model });
@@ -862,12 +875,16 @@ export class Session {
   }
   async archive() {
     await this.control.run(async () => {
+      this.assertOpen();
       if (this.active) throw new AgentError('session_busy', 'Session is active', 409);
       await this.emit('session.archived', {});
     });
   }
   async seedFork(messages: Message[]) {
-    await this.emit('session.forked', { messages: structuredClone(messages) });
+    await this.control.run(async () => {
+      this.assertOpen();
+      await this.emit('session.forked', { messages: structuredClone(messages) });
+    });
   }
   async run(input: string | ContentPart[]): Promise<TurnResult> {
     const receipt = await this.submitInput({
@@ -915,6 +932,11 @@ export class Session {
     });
     for await (const event of this.streamEvents(after)) {
       yield event;
+      if (
+        ['input.rejected', 'input.withdrawn'].includes(event.type) &&
+        event.data.inputId === receipt.inputId
+      )
+        return;
       const turnId = this.inputs.get(receipt.inputId)?.receipt.turnId;
       if (
         event.turnId === turnId &&
@@ -923,25 +945,31 @@ export class Session {
         return;
     }
   }
-  async close() {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
     this.active?.controller.abort();
-    await this.active?.promise;
-    for (const listener of this.listeners) {
-      try {
-        listener({
-          schemaVersion: 1,
-          sessionId: this.id,
-          eventId: '',
-          seq: this.events.length,
-          timestamp: new Date().toISOString(),
-          type: 'session.closed',
-          data: {},
-        });
-      } catch {}
-    }
-    await this.writer.run(async () => {});
-    await this.release();
+    // Cancellation is cooperative: close waits for the turn to observe abort,
+    // but cannot undo tool effects that already happened.
+    this.closePromise = (async () => {
+      await this.active?.promise;
+      await this.control.run(async () => {});
+      for (const listener of this.listeners) {
+        try {
+          listener({
+            schemaVersion: 1,
+            sessionId: this.id,
+            eventId: '',
+            seq: this.events.length,
+            timestamp: new Date().toISOString(),
+            type: 'session.closed',
+            data: {},
+          });
+        } catch {}
+      }
+      await this.writer.run(async () => {});
+      await this.release();
+    })();
+    return this.closePromise;
   }
 }

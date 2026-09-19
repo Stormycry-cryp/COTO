@@ -17,6 +17,34 @@ COTO 是一个可嵌入项目的 TypeScript Agent 基底。它提供模型执行
 
 ## 安装
 
+已有项目可以直接安装 GitHub 版本并初始化：
+
+```bash
+npm install 'git+https://github.com/Stormycry-cryp/COTO.git#main'
+npx coto init
+```
+
+初始化默认选择 DeepSeek `deepseek-flash`，生成 `coto.config.json`、`.env.coto.example`、`coto.agent.mjs`，并将本地凭据和会话目录加入 `.gitignore`。重复初始化保留已有文件。将凭据通过 `DEEPSEEK_API_KEY` 环境变量注入，或在被忽略的 `.env.coto` 中配置后，即可执行：
+
+```bash
+npx coto doctor
+npx coto run '检查项目入口，修复发现的问题并运行相关测试'
+npx coto sessions
+npx coto run '继续上次任务' --session '<session-id>'
+```
+
+**初始化配置默认 `allow-all`，会直接执行已注册的文件、命令和网络工具。** 按需用 `--policy ask` 逐项确认，或 `--policy read-only` 限制为读取；非交互环境下 `ask` 会拒绝需确认的工具。库 API 未配置 Policy 时仍默认为 `read-only`。`run --json` 输出逐行 JSON 事件，Session ID 输出到 stderr，Ctrl+C 请求取消并退出。
+
+自定义 Provider 初始化：
+
+```bash
+npx coto init --provider custom --protocol openai-chat --model '<model>' --base-url 'https://llm.example.com/v1'
+```
+
+初始化后可直接修改 `coto.config.json` 的 Provider、上下文、执行限额和 Skill 目录；密钥使用 `apiKeyEnv` / `headerEnv` 引用环境变量。`doctor` 只做离线配置检查，不会发送付费模型请求。完整配置与嵌入式扩展见 [项目配置](docs/project-configuration.md)。
+
+Node 服务直接 import `coto.agent.mjs` 中的 `createProjectAgent()`；其他技术栈启动 `npx coto serve`，通过 HTTP/SSE 使用同一配置。生产项目应固定已验收 commit，避免跟随移动的 `main`。
+
 从源码构建：
 
 ```bash
@@ -248,7 +276,7 @@ const agent = createAgent({
 - `exec_command`、`process_read`、`process_cancel`
 - `http_fetch`
 
-文件 Tool 受 workspace 边界约束，并拒绝访问 `.git`、`.coto` 及越界 symlink。进程 Tool 是受策略控制的宿主命令执行器，不构成 OS 沙箱；其默认环境仅包含 `PATH`。`http_fetch` 默认拒绝私网/保留地址和重定向。
+文件 Tool 受 workspace 边界约束，并拒绝访问 `.git`、`.coto`、`.env.coto` 及越界 symlink。进程 Tool 是受策略控制的宿主命令执行器，不构成 OS 沙箱；其默认环境仅包含 `PATH`。`http_fetch` 默认拒绝私网/保留地址和重定向。
 
 跨技术栈业务能力可注册为远程 Tool：
 
@@ -498,17 +526,21 @@ npm run build
 npm pack
 node scripts/smoke-package.mjs
 node scripts/smoke-python-client.mjs
+node scripts/smoke-project.mjs
 ```
 
 项目要求 Node.js `>= 22.19.0`。核心行为测试覆盖模型/Tool 往返、中途消息、输入去重、审批、JSONL 恢复、写锁、fork、HTTP/SSE 回放和身份隔离。各 Provider 的协议 mock 与真实端点验证状态以 [`docs/implementation-log.md`](docs/implementation-log.md) 为准；没有凭据时不会把 mock 测试写成真实端点已验收。
 
 GitHub Actions 在 Linux 上检查 Node.js `22.19.0` 和 `24.x`，执行构建、行为测试、独立 tarball 消费者与 Python HTTP/SSE smoke。单实例服务和自定义扩展的边界见设计文档末尾的 `0.1.0` 实现映射。
 
+`smoke-project.mjs` 在干净项目安装 tarball，检查初始化、配置诊断、实际文件工具、重启续接、自定义 Tool/Skill 和 CLI HTTP/SSE。真实项目探针 `scripts/smoke-live-project.mjs` 需要主动注入 `COTO_TEST_API_KEY`，会产生 API 用量；它在临时项目让模型修复代码并运行测试，再独立核对文件、测试和事件。真实探针不加入默认 CI。
+
 ## 设计与协议
 
 - [`docs/agent-base-design.md`](docs/agent-base-design.md)：架构、边界和设计依据。
 - [`docs/backend-integration.md`](docs/backend-integration.md)：后端生命周期、SSE 和多技术栈接入。
 - [`docs/implementation-log.md`](docs/implementation-log.md)：实施步骤、验证证据和待办。
+- [`docs/project-readiness.md`](docs/project-readiness.md)：项目初始化和消费者验收清单。
 - [`upstream.lock.json`](upstream.lock.json)：研究用 Codex 源码版本。
 
 ## License

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 import type { Tool } from '../core/types.js';
 import { AgentError } from '../core/errors.js';
 import { objectSchema, textResult, workspacePath } from './files.js';
@@ -59,11 +60,14 @@ export function processTools(
         ['command'],
       ),
       async execute(args, ctx) {
+        const signal = ctx.turnSignal ? AbortSignal.any([ctx.signal, ctx.turnSignal]) : ctx.signal;
+        signal.throwIfAborted();
         for (const [id, record] of processes)
           if (record.exited && processes.size >= 100) processes.delete(id);
         if (processes.size >= 100)
           throw new AgentError('process_limit', 'Process limit reached', 429);
         const cwd = await workspacePath(ctx.workspace, String(args.cwd ?? '.'));
+        signal.throwIfAborted();
         const child = spawn(String(args.command), {
           shell: true,
           cwd,
@@ -85,20 +89,23 @@ export function processTools(
         };
         const id = randomUUID();
         processes.set(id, record);
-        const collect = (data: Buffer) => {
-          record.output += data.toString('utf8');
+        const collect = (data: string) => {
+          record.output += data;
           if (record.output.length > 64_000) {
             record.dropped += record.output.length - 64_000;
             record.output = record.output.slice(-64_000);
           }
         };
-        child.stdout?.on('data', collect);
-        child.stderr?.on('data', collect);
+        for (const stream of [child.stdout, child.stderr]) {
+          const decoder = new StringDecoder('utf8');
+          stream?.on('data', (data: Buffer) => collect(decoder.write(data)));
+          stream?.once('end', () => collect(decoder.end()));
+        }
         const timer = setTimeout(() => kill(record), Number(args.timeoutMs ?? 120_000));
         const stop = () => kill(record);
-        const signal = ctx.turnSignal ?? ctx.signal;
         signal.addEventListener('abort', stop, { once: true });
         const finish = (code: number | null) => {
+          if (record.exited) return;
           record.exitCode = code;
           record.exited = true;
           clearTimeout(timer);
@@ -106,7 +113,7 @@ export function processTools(
           resolve();
         };
         child.once('error', (e) => {
-          collect(Buffer.from(e.message));
+          collect(e.message);
           finish(-1);
         });
         child.once('close', finish);

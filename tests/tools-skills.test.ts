@@ -115,6 +115,8 @@ test('file read and write boundaries deny state paths and escaping symlinks', as
   await mkdir(join(root, '.coto'));
   await writeFile(join(root, '.git', 'config'), 'secret');
   await writeFile(join(root, '.coto', 'state'), 'secret');
+  await writeFile(join(root, '.env.coto'), 'FIXTURE_KEY=secret');
+  await symlink(join(root, '.env.coto'), join(root, 'credential-link'));
   await writeFile(join(outside, 'secret.txt'), 'outside');
   await symlink(outside, join(root, 'escape'));
   const tools = fileTools();
@@ -125,6 +127,8 @@ test('file read and write boundaries deny state paths and escaping symlinks', as
 
   await assert.rejects(read.execute({ path: '.git/config' }, ctx), agentError('path_denied'));
   await assert.rejects(read.execute({ path: '.coto/state' }, ctx), agentError('path_denied'));
+  await assert.rejects(read.execute({ path: '.env.coto' }, ctx), agentError('path_denied'));
+  await assert.rejects(read.execute({ path: 'credential-link' }, ctx), agentError('path_denied'));
   await assert.rejects(read.execute({ path: 'escape/secret.txt' }, ctx), agentError('path_denied'));
   await assert.rejects(
     write.execute({ path: 'escape/new.txt', content: 'blocked' }, ctx),
@@ -177,6 +181,51 @@ test('turn cancellation terminates an active command before its yield deadline',
   const result = jsonResult(await within(running, 2000, 'process cancellation timed out'));
   assert.equal(result.exited, true);
   assert.match(result.output, /started/);
+});
+
+test('tool deadline terminates a command even while the turn stays active', async (t) => {
+  const root = await temporary(t, 'coto-process-deadline-');
+  const tools = processTools();
+  t.after(() => named(tools, 'exec_command').close!());
+  const controller = new AbortController();
+  const turn = new AbortController();
+  const running = named(tools, 'exec_command').execute(
+    { command: 'sleep 30', yieldMs: 5000 },
+    context(root, { signal: controller.signal, turnSignal: turn.signal }),
+  );
+  const timer = setTimeout(() => controller.abort(), 100);
+  t.after(() => clearTimeout(timer));
+  const result = jsonResult(await within(running, 2000, 'tool deadline was ignored'));
+  assert.equal(result.exited, true);
+  assert.equal(turn.signal.aborted, false);
+});
+
+test('commands preserve UTF-8 output split across chunks and reject pre-aborted execution', async (t) => {
+  const root = await temporary(t, 'coto-process-utf8-');
+  const tools = processTools();
+  const execute = named(tools, 'exec_command');
+  t.after(() => execute.close!());
+  const script =
+    'process.stdout.write(Buffer.from([0xe4])); setTimeout(() => process.stdout.write(Buffer.from([0xb8, 0xad])), 100)';
+  const result = jsonResult(
+    await execute.execute(
+      {
+        command: `'${process.execPath.replaceAll("'", "'\\''")}' -e '${script}'`,
+        yieldMs: 2000,
+      },
+      context(root),
+    ),
+  );
+  assert.equal(result.output, '\u4e2d');
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    execute.execute(
+      { command: 'touch should-not-exist' },
+      context(root, { signal: controller.signal }),
+    ),
+  );
+  await assert.rejects(readFile(join(root, 'should-not-exist')), { code: 'ENOENT' });
 });
 
 async function readBody(request: IncomingMessage) {

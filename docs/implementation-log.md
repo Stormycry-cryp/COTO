@@ -114,7 +114,7 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 - [x] 实际运行 Python HTTP/SSE 客户端，对本地真实 COTO 服务完成回执、流式内容和终态验收。
 - [ ] 实际运行 Java、Go、.NET 最小消费者；README 目前只提供接入片段。
 - [ ] 通过真实反向代理验证 SSE 缓冲、心跳和重连行为。
-- [x] 上传 `feat/agent-foundation` 并创建中文 [PR #1](https://github.com/Stormycry-cryp/COTO/pull/1)。已确认 Node 22.19.0 / 24.x CI 触发，最终状态由 [PR checks](https://github.com/Stormycry-cryp/COTO/pull/1/checks) 持续记录；当前分支尚未合入 `main`。
+- [x] 上传 `feat/agent-foundation` 并创建中文 [PR #1](https://github.com/Stormycry-cryp/COTO/pull/1)，Node 22.19.0 / 24.x CI 通过，已合入 `main`，merge commit 为 `aa15221ba93196e7083325028459d6966e21bb5a`。[合并后 CI](https://github.com/Stormycry-cryp/COTO/actions/runs/35413879578) 同样通过。
 
 首次代码提交为 `819db5bf7ebec197a691c9270edf7b95380d181e`。本机 Git HTTPS 连接超时后，通过 GitHub Git Data API 发布功能分支，并校验远端源码树和提交 SHA 与本地完全一致。仓库提供源码和可构建 npm 包，尚未发布到 npm registry。
 
@@ -130,3 +130,22 @@ npm audit --omit=dev --registry=https://registry.npmjs.org
 - 本次发现并修复适配器取消后仍可能交付 SDK 缓冲完成事件的问题。四协议本地回归在修复前均失败、修复后均通过；全仓 63/63 测试、类型检查与构建通过。
 
 `scripts/smoke-provider.mjs` 保存无密钥的可重跑脚本：每次输出最多 256 token，Runtime 最多 3 步、无自动重试；`COTO_PROBE_ONLY=cancellation` 可单独检查取消。默认 CI 不运行生产探针。这里只验收短文本、工具和上述会话路径，未验证长上下文、图片、DeepSeek 其他模型或服务端取消后的计费停止。
+
+## 项目初始化与真实修改验收（2026-09-19）
+
+首版合并后继续完成用户要求的开箱即用路径，核对清单见 [project-readiness.md](project-readiness.md)。
+
+- 新增 `coto init/doctor/run/sessions`，`serve` 共用声明式配置；生成配置按用户选择默认 `allow-all`，注册基础 Tool 和 Skill 根目录。
+- `@coto/agent/config` 导出 `loadProjectConfig()`，支持直接 Provider endpoint、协议、环境密钥、自定义 header、兼容选项、上下文和运行限额；`.env.coto` 只在配置闭包中解析。
+- 初始化保护已有文件；`doctor` 不调用模型且不输出凭据值。基础文件工具禁止读取 `.env.coto`，进程工具仍是受信任宿主命令执行器。
+- 修复真实安装中 npm bin 软链接及 macOS `/var` 路径导致 CLI 静默不执行的问题；修复进程忽略单次工具超时和 UTF-8 分块损坏问题。
+- Session 和 Agent 的并发关闭等待完整释放；关闭期间创建/打开的会话会被纳入关闭；关闭后的写操作拒绝；重新 get 已关闭缓存时重开；撤回的 `runStream` 输入能够结束。
+- CLI 在失败或取消后使用 `--session` 会显式恢复暂停的会话；有未核对工具副作用时在排队前报错。回归测试在修复前复现了 unsettled top-level await / 退出码 13，修复后用新提示完成一轮并退出 0。
+- TTY 审批在回合超时或取消后结束读取；Provider compat 校验对齐当前 SDK；离线配置检查拒绝不合理的上下文 token 限额；服务密钥环境变量覆盖通过真实 HTTP fixture 验证。
+- Node 22.23.2 / 24.21.0 独立 tarball 项目 smoke 已通过，覆盖 init 文件保护、doctor、真实文件工具、进程重启后 Session 续接、自定义 Tool/Skill、serve HTTP/SSE。CI 已加入此项。
+
+真实模型项目探针使用 `scripts/smoke-live-project.mjs`，在独立临时目录安装 tarball。测试初始 addition 源码错误，先确认测试失败，再让 DeepSeek 读取源码和测试、修复源码、执行测试。实际 Tool 顺序为 `read_file`、`read_file`、`edit_file`、`read_file`、`exec_command`，模型观察到测试成功；父进程再次验证源码已修改、测试未修改并独立运行测试通过。模型回复本身不作为文件修复证据。
+
+此次四个完整请求的输入/输出 usage 分别为 `1347/78`、`1582/154`、`1758/74`、`2007/122`。配置直连 `https://api.deepseek.com`，模型 `deepseek-flash`，`maxSteps=10`、`maxRetries=0`、`maxTurnMs=180000`、每次输出最多 1024 token。凭据经关闭回显的 stdin 注入，不保存到临时配置或仓库；会话日志检查未出现凭据，临时项目验证后清理。该探针不加入默认 CI，也不代表其他模型或复杂项目任务已验收。
+
+最终本地验证使用 Node 22.23.2：类型检查、89/89 测试、构建、独立 tarball 项目 smoke 和 Python HTTP/SSE smoke 全部通过。tarball 项目检查额外通过 `npm exec -- coto doctor` 验证 npm bin 入口。后续 PR 检查结果以 GitHub Actions 对应提交为准。
