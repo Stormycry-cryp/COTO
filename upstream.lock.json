@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/openai/codex.git",
+  "checkout": "upstream/codex",
+  "revision": "7498521d288b9b3b96ffba4eedf089d8d6e06a84",
+  "commitTime": "2026-09-18T00:59:10+00:00",
+  "inspectedOn": "2026-09-19",
+  "license": "Apache-2.0",
+  "licenseFile": "upstream/codex/LICENSE",
+  "noticeFile": "upstream/codex/NOTICE",
+  "acquisition": "git clone --depth 1",
+  "purpose": "Pinned upstream source for architecture analysis and traceable implementation ports. Not a runtime dependency."
+}

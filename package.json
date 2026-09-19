@@ -1,0 +1,96 @@
+{
+  "name": "@coto/agent",
+  "version": "0.1.0",
+  "description": "Composable agent runtime with configurable providers, durable sessions, skills and HTTP/SSE.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Stormycry-cryp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Stormycry-cryp/COTO.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./skills": {
+      "types": "./dist/skills/index.d.ts",
+      "import": "./dist/skills/index.js"
+    },
+    "./session": {
+      "types": "./dist/session/index.d.ts",
+      "import": "./dist/session/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    }
+  },
+  "bin": {
+    "coto": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "docs",
+    "examples",
+    "protocol",
+    "upstream.lock.json"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "demo": "tsx examples/demo.ts",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.85.1",
+    "ajv": "8.20.0",
+    "diff": "8.0.4",
+    "eventsource-parser": "3.0.6",
+    "ignore": "7.0.5",
+    "picomatch": "4.0.7",
+    "proper-lockfile": "4.1.2",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/picomatch": "^4.0.2",
+    "@types/proper-lockfile": "^4.1.4",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  },
+  "main": "./dist/index.js",
+  "bugs": {
+    "url": "https://github.com/Stormycry-cryp/COTO/issues"
+  },
+  "homepage": "https://github.com/Stormycry-cryp/COTO#readme"
+}

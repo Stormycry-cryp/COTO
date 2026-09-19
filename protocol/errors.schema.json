@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Stormycry-cryp/COTO/protocol/errors.schema.json",
+  "title": "COTO HTTP Error",
+  "type": "object",
+  "required": ["requestId", "error"],
+  "properties": {
+    "requestId": { "type": "string" },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Stable machine-readable error code, for example turn_conflict or queue_full."
+        },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

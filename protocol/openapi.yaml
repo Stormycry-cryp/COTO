@@ -1,0 +1,393 @@
+openapi: 3.1.0
+info:
+  title: COTO Agent HTTP API
+  version: 0.1.0
+  description: |
+    COTO 当前实现的 HTTP 命令与 SSE 协议。认证格式由宿主的 authenticate
+    钩子决定；本文档中的 Authorization header 只是常见部署约定。
+servers:
+  - url: http://127.0.0.1:8787
+paths:
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /readyz:
+    get:
+      operationId: readiness
+      responses:
+        '200':
+          description: Service accepts work.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Service is draining.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /v1/sessions:
+    post:
+      operationId: createSession
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          description: Stable key for idempotent Session creation within one owner identity.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspaceId:
+                  const: default
+                agentProfileId:
+                  const: default
+              additionalProperties: false
+      responses:
+        '201':
+          description: Session created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSnapshot'
+        '200':
+          description: Existing Session returned for a repeated Idempotency-Key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSnapshot'
+        default:
+          $ref: '#/components/responses/Error'
+    get:
+      operationId: listSessions
+      parameters:
+        - $ref: '#/components/parameters/Authorization'
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Sessions visible to the current owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions, nextOffset]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SessionMeta'
+                  nextOffset:
+                    oneOf:
+                      - type: integer
+                      - type: 'null'
+                additionalProperties: false
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          description: Current durable Session projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSnapshot'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/inputs:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+    post:
+      operationId: submitInput
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+          description: When present, it must equal inputId.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InputRequest'
+      responses:
+        '202':
+          description: Input durably accepted or a prior receipt returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InputReceipt'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/inputs/{inputId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+      - name: inputId
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: withdrawInput
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/events:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+        description: Replay events with seq greater than this value.
+      - name: Last-Event-ID
+        in: header
+        required: false
+        schema:
+          type: string
+        description: SSE cursor in sessionId:seq form; takes precedence over after.
+    get:
+      operationId: streamEvents
+      responses:
+        '200':
+          description: |
+            SSE stream. Each data field is an AgentEvent. Heartbeats are SSE comments.
+            Runtime stream failures are sent as a non-persistent stream.error event.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/turns/{turnId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+      - name: turnId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: cancelTurn
+      responses:
+        '202':
+          description: Cancellation request accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted, turnId]
+                properties:
+                  accepted:
+                    const: true
+                  turnId:
+                    type: string
+                additionalProperties: false
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/approvals:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+    post:
+      operationId: resolveApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approvalId, allowed]
+              properties:
+                approvalId:
+                  type: string
+                allowed:
+                  type: boolean
+              additionalProperties: false
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/reconcile:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+    post:
+      operationId: reconcileTool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invocationId, outcome]
+              properties:
+                invocationId:
+                  type: string
+                outcome:
+                  type: string
+                  maxLength: 12000
+              additionalProperties: false
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/resume:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+    post:
+      operationId: resumeSession
+      responses:
+        '202':
+          description: Resume accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted:
+                    const: true
+                additionalProperties: false
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/fork:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+    post:
+      operationId: forkSession
+      responses:
+        '201':
+          description: Child Session created from a parent that is not active and has no unresolved Tool invocation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSnapshot'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+    post:
+      operationId: archiveSession
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/sessions/{sessionId}/artifacts/{artifactId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/Authorization'
+      - name: artifactId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getArtifact
+      responses:
+        '200':
+          description: Stored full Tool output.
+          content:
+            text/plain:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  parameters:
+    Authorization:
+      name: Authorization
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Optional here because the host decides whether and how to authenticate.
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{1,100}$'
+  schemas:
+    SessionSnapshot:
+      $ref: './session.schema.json'
+    SessionMeta:
+      $ref: './session.schema.json#/$defs/SessionMeta'
+    InputRequest:
+      $ref: './input.schema.json'
+    InputReceipt:
+      $ref: './input.schema.json#/$defs/InputReceipt'
+    AgentEvent:
+      $ref: './event.schema.json'
+    Error:
+      $ref: './errors.schema.json'
+    Health:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+      additionalProperties: false
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          const: true
+      additionalProperties: false
+  responses:
+    Ok:
+      description: Command completed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Ok'
+    Error:
+      description: Structured error response. HTTP status indicates the error class.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
