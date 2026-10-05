@@ -29,6 +29,10 @@
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
     },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js"
+    },
     "./skills": {
       "types": "./dist/skills/index.d.ts",
       "import": "./dist/skills/index.js"
