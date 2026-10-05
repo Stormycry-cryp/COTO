@@ -1,4 +1,5 @@
 import { Ajv } from 'ajv';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { Serial, abortable, deferred, delay } from './async.js';
 import { AgentError, errorMessage } from './errors.js';
 import { ContextManager, type ContextOptions } from './context.js';
@@ -92,11 +93,13 @@ export class Session {
     this.events = events;
     this.context = new ContextManager(options.context);
     const ajv = new Ajv({ allErrors: true, strict: false });
+    const ajv2020 = new Ajv2020({ allErrors: true, strict: false });
     for (const tool of options.tools ?? []) {
       if (this.tools.has(tool.name))
         throw new AgentError('duplicate_tool', `Duplicate tool: ${tool.name}`, 422);
       this.tools.set(tool.name, tool);
-      this.validators.set(tool.name, ajv.compile(tool.parameters));
+      const validator = tool.parameters.$schema === 'https://json-schema.org/draft/2020-12/schema' ? ajv2020 : ajv;
+      this.validators.set(tool.name, validator.compile(tool.parameters));
     }
     for (const event of events) this.reduce(event);
   }
@@ -732,12 +735,15 @@ export class Session {
           throw error;
         }
       }
-      const serialized = JSON.stringify(result.content);
+      // Bound text independently: serializing all parts turns image base64 into model text.
+      const textParts = result.content.filter((part) => part.type === 'text');
+      const serialized = JSON.stringify(textParts);
       if (serialized.length > (this.options.maxOutputChars ?? 12_000)) {
         const artifactId = await this.store.putArtifact(this.id, serialized);
         result = {
           ...result,
           content: [
+            ...result.content.filter((part) => part.type === 'image'),
             {
               type: 'text',
               text:

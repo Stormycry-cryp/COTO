@@ -7,9 +7,25 @@ import type {
 } from './types.js';
 import { AgentError } from './errors.js';
 
-/** UTF-8 bytes are a deliberately conservative upper estimate, not provider billing. */
-export function estimateTokens(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
+/** Image bytes are transport data, never ordinary text tokens or summary prompt text. */
+export function withoutImageData(value: unknown): string {
+  return JSON.stringify(value, (_key, part) =>
+    part && typeof part === 'object' && part.type === 'image'
+      ? { type: 'image', mimeType: part.mimeType, omitted: 'Image data omitted from history summary' }
+      : part,
+  );
+}
+/** Conservative text bytes plus a configurable, nonzero per-image allowance; not billing. */
+export function estimateTokens(value: unknown, imageTokens = 4096): number {
+  let images = 0;
+  const serialized = JSON.stringify(value, (_key, part) => {
+    if (part && typeof part === 'object' && part.type === 'image') {
+      images++;
+      return { type: 'image', mimeType: part.mimeType };
+    }
+    return part;
+  });
+  return new TextEncoder().encode(serialized).length + images * imageTokens;
 }
 export interface ContextOptions {
   system?: string;
@@ -17,9 +33,14 @@ export interface ContextOptions {
   estimate?: (value: unknown) => number;
   safetyTokens?: number;
   keepRecentMessages?: number;
+  /** Set from the selected provider's conservative image estimate. */
+  imageTokens?: number;
 }
 export class ContextManager {
-  constructor(readonly options: ContextOptions = {}) {}
+  constructor(readonly options: ContextOptions = {}) {
+    if (options.imageTokens !== undefined && (!Number.isSafeInteger(options.imageTokens) || options.imageTokens < 1))
+      throw new AgentError('invalid_media_budget', 'Image token allowance must be a positive integer', 422);
+  }
   async prepare(
     provider: ModelProvider,
     messages: Message[],
@@ -44,7 +65,7 @@ export class ContextManager {
         );
       system += '\n\n' + fragment;
     }
-    const estimate = this.options.estimate ?? estimateTokens;
+    const estimate = this.options.estimate ?? ((value: unknown) => estimateTokens(value, this.options.imageTokens));
     const maxOutputTokens = provider.capabilities.maxOutputTokens;
     const budget =
       provider.capabilities.contextWindow - maxOutputTokens - (this.options.safetyTokens ?? 512);
@@ -74,7 +95,7 @@ export class ContextManager {
     let batch: Message[] = [];
     const flush = async () => {
       if (!batch.length) return;
-      const text = JSON.stringify(batch.map(({ providerData, ...m }) => m));
+      const text = withoutImageData(batch.map(({ providerData, ...m }) => m));
       const input: Message = {
         id: crypto.randomUUID(),
         role: 'user',
